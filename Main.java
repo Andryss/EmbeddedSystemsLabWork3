@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class Main {
+
+    // Load opencv natives
     static {
         try {
             System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
@@ -33,6 +35,7 @@ public class Main {
 
     static final String winName = "Stream";
 
+    // Useful objects
     VideoCapture capture;
     Mat image;
     Rect boxRect;
@@ -40,17 +43,13 @@ public class Main {
     Mat box;
     JFrame frame;
     JLabel label;
-    Mat grey;
-    Mat threshold;
-    Mat hierarchy;
-    List<MatOfPoint> contours;
-    List<MatOfPoint> approxCurves;
 
     private void run() {
         init();
         play();
     }
 
+    // Initialize fields and main JFrame
     private void init() {
         capture = new VideoCapture(0);
         image = new Mat();
@@ -60,11 +59,13 @@ public class Main {
 
         label = new JLabel();
         update();
+
         frame = new JFrame(winName);
         frame.setResizable(false);
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        frame.add(label);
         frame.addKeyListener(new KeyBoxRectListener());
+
+        frame.add(label);
         frame.pack();
 
         boxRectValues = new double[4];
@@ -73,14 +74,9 @@ public class Main {
         boxRectValues[0] = imageSize.width / 2 - boxRectValues[2] / 2;
         boxRectValues[1] = imageSize.height / 2 - boxRectValues[3] / 2;
         boxRect = new Rect(boxRectValues);
-
-        grey = new Mat();
-        threshold = new Mat();
-        hierarchy = new Mat();
-        contours = new ArrayList<>();
-        approxCurves = new ArrayList<>();
     }
 
+    // Main cycle
     private void play() {
         frame.setVisible(true);
         while (frame.isVisible()) {
@@ -90,13 +86,22 @@ public class Main {
         }
     }
 
+    // Read image frame and write it to "image" Mat
     private void read() {
 //        image = Imgcodecs.imread("templates.jpg");
         capture.read(image);
     }
 
+
+    Mat grey = new Mat();
+    Mat threshold = new Mat();
+    Mat hierarchy = new Mat();
+    List<MatOfPoint> contours = new ArrayList<>();
+    List<MatOfPoint> approxCurves = new ArrayList<>();
+
+    // Draw on "image" Mat everything we want
     private void draw() {
-        box = new Mat(image, boxRect);
+        box = image.submat(boxRect);
 
         Imgproc.cvtColor(box, grey, Imgproc.COLOR_BGR2GRAY);
         Imgproc.threshold(grey, threshold, 127, 255, Imgproc.THRESH_BINARY);
@@ -106,8 +111,14 @@ public class Main {
 
         approxCurves.clear();
         for (MatOfPoint contour : contours) {
+            Point[] points = contour.toArray();
+            if (Arrays.stream(points).anyMatch(point -> point.x == 0 && point.y == 0 ||
+                    point.x == boxRect.width && point.y == 0 ||
+                    point.x == 0 && point.y == boxRect.height ||
+                    point.x == boxRect.width && point.y == boxRect.height)) continue;
+
             MatOfPoint2f approxCurve = new MatOfPoint2f();
-            MatOfPoint2f sourceCurve = new MatOfPoint2f(contour.toArray());
+            MatOfPoint2f sourceCurve = new MatOfPoint2f(points);
             Imgproc.approxPolyDP(sourceCurve, approxCurve, 0.01 * Imgproc.arcLength(sourceCurve, true), true);
             MatOfPoint destCurve = new MatOfPoint();
             destCurve.fromList(
@@ -116,14 +127,11 @@ public class Main {
                             .collect(Collectors.toList())
             );
             approxCurves.add(destCurve);
-            if (destCurve.rows() == 4) {
+
+            String colorAndFigure = recognizeColorAndFigure(destCurve);
+            if (colorAndFigure != null) {
                 Rect boundingRect = Imgproc.boundingRect(destCurve);
-                double ratio = (double) boundingRect.height / boundingRect.width;
-                String text = (ratio < 0.9 || ratio > 1.1) ? "Rectangle" : "Square";
-                Imgproc.putText(image, text, new Point(boundingRect.x, boundingRect.y), Imgproc.FONT_HERSHEY_PLAIN, 1, new Scalar(0, 0, 255));
-            } else if (approxCurve.rows() == 3) {
-                Rect boundingRect = Imgproc.boundingRect(destCurve);
-                Imgproc.putText(image, "Triangle", new Point(boundingRect.x, boundingRect.y), Imgproc.FONT_HERSHEY_PLAIN, 1, new Scalar(0, 0, 255));
+                Imgproc.putText(image, colorAndFigure, new Point(boundingRect.x, boundingRect.y), Imgproc.FONT_HERSHEY_PLAIN, 1, new Scalar(0, 0, 255));
             }
         }
 
@@ -131,10 +139,47 @@ public class Main {
         Imgproc.rectangle(image, boxRect, new Scalar(0, 0, 255));
     }
 
+
+    Mat boundingMatHsv = new Mat();
+    Mat boundingMatHsvMask = new Mat();
+
+    private String recognizeColorAndFigure(MatOfPoint destCurve) {
+        int rows = destCurve.rows();
+        if (rows != 3 && rows != 4) return null;
+        String color = "unknown", figure;
+        Rect boundingRect = Imgproc.boundingRect(destCurve);
+
+        Mat boundingMat = image.submat(boundingRect);
+        Imgproc.cvtColor(boundingMat, boundingMatHsv, Imgproc.COLOR_BGR2HSV);
+        Core.inRange(boundingMatHsv, new Scalar(0, 100, 100), new Scalar(180, 255, 255), boundingMatHsvMask);
+        Scalar mean = Core.mean(boundingMatHsv, boundingMatHsvMask);
+        if (Arrays.equals(mean.val, new double[]{0, 0, 0, 0})) return null;
+        double hue = mean.val[0];
+
+        if (hue > 40 && hue < 75) {
+            color = "green";
+        } else if (hue > 90 && hue < 140) {
+            color = "blue";
+        } else if (hue < 10 || hue > 165) {
+            color = "red";
+        }
+
+        if (rows == 4) {
+            double ratio = (double) boundingRect.height / boundingRect.width;
+            figure = (ratio < 0.9 || ratio > 1.1) ? "rectangle" : "square";
+        } else {
+            figure = "triangle";
+        }
+
+        return color + " " + figure;
+    }
+
+    // Update JFrame user see
     private void update() {
         label.setIcon(new ImageIcon(HighGui.toBufferedImage(image)));
     }
 
+    // KeyListener to change box size
     class KeyBoxRectListener extends KeyAdapter {
         static final int stepSize = 10;
 
