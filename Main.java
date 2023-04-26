@@ -1,6 +1,7 @@
 import cz.adamh.utils.NativeUtils;
 import org.opencv.core.*;
 import org.opencv.highgui.HighGui;
+import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
 
@@ -88,74 +89,101 @@ public class Main {
 
     // Read image frame and write it to "image" Mat
     private void read() {
-//        image = Imgcodecs.imread("templates.jpg");
+        // image = Imgcodecs.imread("templates0.jpg");
         capture.read(image);
     }
 
-
+    // Useful objects for "draw" function
     Mat grey = new Mat();
     Mat threshold = new Mat();
     Mat hierarchy = new Mat();
     List<MatOfPoint> contours = new ArrayList<>();
     List<MatOfPoint> approxCurves = new ArrayList<>();
 
+    // Colors
+    Scalar red = new Scalar(0, 0, 255);
+    Scalar green = new Scalar(0, 255, 0);
+    Scalar hsvLowerBound = new Scalar(0, 100, 100);
+    Scalar hsvUpperBound = new Scalar(180, 255, 255);
+
     // Draw on "image" Mat everything we want
     private void draw() {
+        // Read box mat
         box = image.submat(boxRect);
 
+        // Convert to grey and threshold
         Imgproc.cvtColor(box, grey, Imgproc.COLOR_BGR2GRAY);
         Imgproc.threshold(grey, threshold, 127, 255, Imgproc.THRESH_BINARY);
 
+        // Find contours
         contours.clear();
         Imgproc.findContours(threshold, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
 
         approxCurves.clear();
+        // Iterate through contours to decide which of them are figures
         for (MatOfPoint contour : contours) {
             Point[] points = contour.toArray();
-            if (Arrays.stream(points).anyMatch(point -> point.x == 0 && point.y == 0 ||
-                    point.x == boxRect.width && point.y == 0 ||
-                    point.x == 0 && point.y == boxRect.height ||
-                    point.x == boxRect.width && point.y == boxRect.height)) continue;
+            // Don't detect if some points on the borders of the box
+            if (Arrays.stream(points).anyMatch(point ->
+                    point.x == 0 || point.x == boxRect.width || point.y == 0 || point.y == boxRect.height)
+            ) continue;
+            // Don't detect small contours
+            Rect rect = Imgproc.boundingRect(contour);
+            if (rect.height < 30 || rect.width < 30) continue;
 
+            // Approximate curve with some variance
             MatOfPoint2f approxCurve = new MatOfPoint2f();
             MatOfPoint2f sourceCurve = new MatOfPoint2f(points);
             Imgproc.approxPolyDP(sourceCurve, approxCurve, 0.01 * Imgproc.arcLength(sourceCurve, true), true);
+            // Add offset of the box to contour
             MatOfPoint destCurve = new MatOfPoint();
             destCurve.fromList(
                     Arrays.stream(approxCurve.toArray())
                             .peek(point -> point.set(new double[]{boxRect.x + point.x, boxRect.y + point.y}))
                             .collect(Collectors.toList())
             );
+            // Append approximated curve to the list
             approxCurves.add(destCurve);
 
+            // Get color name and figure name and put it next
             String colorAndFigure = recognizeColorAndFigure(destCurve);
             if (colorAndFigure != null) {
                 Rect boundingRect = Imgproc.boundingRect(destCurve);
-                Imgproc.putText(image, colorAndFigure, new Point(boundingRect.x, boundingRect.y), Imgproc.FONT_HERSHEY_PLAIN, 1, new Scalar(0, 0, 255));
+                Imgproc.putText(image, colorAndFigure, new Point(boundingRect.x, boundingRect.y), Imgproc.FONT_HERSHEY_PLAIN, 1, red);
             }
         }
 
-        Imgproc.drawContours(image, approxCurves, -1, new Scalar(0, 255, 0));
-        Imgproc.rectangle(image, boxRect, new Scalar(0, 0, 255));
+        // Draw box rectangle
+        Imgproc.rectangle(image, boxRect, red);
+        // Draw approximated contours
+        Imgproc.drawContours(image, approxCurves, -1, green, 2);
     }
 
 
     Mat boundingMatHsv = new Mat();
     Mat boundingMatHsvMask = new Mat();
+    double[] emptyHsvScalarValue = new double[]{0, 0, 0, 0};
 
+    // Recognize color and figure of the curve
     private String recognizeColorAndFigure(MatOfPoint destCurve) {
+        // Get points count
         int rows = destCurve.rows();
         if (rows != 3 && rows != 4) return null;
-        String color = "unknown", figure;
+        // Get curve rect
         Rect boundingRect = Imgproc.boundingRect(destCurve);
 
+        // Convert to HSV
         Mat boundingMat = image.submat(boundingRect);
         Imgproc.cvtColor(boundingMat, boundingMatHsv, Imgproc.COLOR_BGR2HSV);
-        Core.inRange(boundingMatHsv, new Scalar(0, 100, 100), new Scalar(180, 255, 255), boundingMatHsvMask);
+        // Get colored mask (delete white)
+        Core.inRange(boundingMatHsv, hsvLowerBound, hsvUpperBound, boundingMatHsvMask);
+        // Get mean color and extract hue
         Scalar mean = Core.mean(boundingMatHsv, boundingMatHsvMask);
-        if (Arrays.equals(mean.val, new double[]{0, 0, 0, 0})) return null;
+        if (Arrays.equals(mean.val, emptyHsvScalarValue)) return null;
         double hue = mean.val[0];
 
+        // Encode color string from hue value
+        String color = "unknown";
         if (hue > 40 && hue < 75) {
             color = "green";
         } else if (hue > 90 && hue < 140) {
@@ -164,6 +192,8 @@ public class Main {
             color = "red";
         }
 
+        // Encode figure string from points count
+        String figure;
         if (rows == 4) {
             double ratio = (double) boundingRect.height / boundingRect.width;
             figure = (ratio < 0.9 || ratio > 1.1) ? "rectangle" : "square";
@@ -171,6 +201,7 @@ public class Main {
             figure = "triangle";
         }
 
+        // Return color and figure
         return color + " " + figure;
     }
 
@@ -179,7 +210,7 @@ public class Main {
         label.setIcon(new ImageIcon(HighGui.toBufferedImage(image)));
     }
 
-    // KeyListener to change box size
+    // KeyListener to move box and change box size
     class KeyBoxRectListener extends KeyAdapter {
         static final int stepSize = 10;
 
