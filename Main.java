@@ -1,3 +1,4 @@
+import cz.adamh.utils.NativeUtils;
 import org.opencv.core.*;
 import org.opencv.highgui.HighGui;
 import org.opencv.imgproc.Imgproc;
@@ -6,6 +7,7 @@ import org.opencv.videoio.VideoCapture;
 import javax.swing.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -13,7 +15,16 @@ import java.util.stream.Collectors;
 
 public class Main {
     static {
-        System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+        try {
+            System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+        } catch (UnsatisfiedLinkError e) {
+            try {
+                NativeUtils.loadLibraryFromJar("/" + System.mapLibraryName(Core.NATIVE_LIBRARY_NAME));
+            } catch (IOException exception) {
+                throw new RuntimeException(exception);
+            }
+        }
+
     }
 
     public static void main(String[] args) {
