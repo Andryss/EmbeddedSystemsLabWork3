@@ -1,7 +1,6 @@
 import cz.adamh.utils.NativeUtils;
 import org.opencv.core.*;
 import org.opencv.highgui.HighGui;
-import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
 
@@ -27,7 +26,6 @@ public class Main {
                 throw new RuntimeException(exception);
             }
         }
-
     }
 
     public static void main(String[] args) {
@@ -52,7 +50,32 @@ public class Main {
 
     // Initialize fields and main JFrame
     private void init() {
-        capture = new VideoCapture(0);
+        int capture_width=1280,
+                capture_height=720,
+                display_width=1280,
+                display_height=720,
+                framerate=30,
+                flip_method=0;
+        capture = new VideoCapture(
+                String.format(
+                        "nvarguscamerasrc ! " +
+                        "video/x-raw(memory:NVMM), " +
+                        "width=(int)%d, height=(int)%d, " +
+                        "format=(string)NV12, framerate=(fraction)%d/1 ! " +
+                        "nvvidconv flip-method=%d ! " +
+                        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! " +
+                        "videoconvert ! " +
+                        "video/x-raw, format=(string)BGR ! appsink max-buffers=1 drop=true",
+                        capture_width,
+                        capture_height,
+                        framerate,
+                        flip_method,
+                        display_width,
+                        display_height
+                ),1800
+        );
+//        capture = VideoCapture(0);
+
         image = new Mat();
         read();
 
@@ -89,7 +112,7 @@ public class Main {
 
     // Read image frame and write it to "image" Mat
     private void read() {
-        // image = Imgcodecs.imread("templates0.jpg");
+//         image = Imgcodecs.imread("templates.jpg");
         capture.read(image);
     }
 
